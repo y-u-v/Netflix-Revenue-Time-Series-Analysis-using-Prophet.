@@ -1,0 +1,378 @@
+---
+title: "Netflix Revenue Time Series Analysis using Prophet" 
+author: "Yuv Patel" 
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo 
+    highlight: kate
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+<style>
+h1 {color: #E50914; font-weight: 700; margin-top: 40px}
+
+h2 {color: #B20710; font-weight: 600; margin-top: 15px}
+
+
+body {font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; font-size: 16px; line-height: 1.6;}
+
+blockquote {background-color: #f5f5f5; border-left: 5px solid #E50914; padding: 10px 15px; margin: 15px 0; border-radius: 5px;}
+
+</style>
+
+
+```{r, echo=FALSE}
+# This code will display the QMUL logo at the top right of the page
+# Do not change this code
+htmltools::img(src = knitr::image_uri("images/QMlogo.png"),
+               alt = 'logo',
+               style = 'position:absolute; top:0; right:0; padding:10px; width:20%;')
+```
+
+# Introduction
+
+
+This report explores Netflix’s revenue over time using time series analysis, with the aim of understanding past trends and forecasting future performance.
+
+Over the past decade, streaming platforms like Netflix have grown rapidly, making them an interesting case for analysing revenue patterns. By applying the Prophet forecasting model, this analysis aims to identify key trends in the data and provide insight into how revenue may evolve going forward.
+
+> 🎯 **Objective**  
+> To analyse Netflix’s decade-long revenue trends and produce a forecast using a time series model.
+
+---
+
+
+# Data
+
+
+## Data Description
+
+The dataset used in this analysis consists of Netflix’s quarterly revenue, covering the period from 2015 to 2025. Each observation includes a date and the corresponding revenue value, allowing changes over time to be examined clearly.
+
+The data was obtained from publicly available financial sources, including Netflix’s investor relations reports and financial databases. Using quarterly data provides a good balance between detail and clarity, capturing short-term movements while still highlighting long-term trends.
+
+Before applying the model, the dataset was formatted to meet Prophet’s requirements. In particular, the columns were renamed to `ds` (date) and `y` (revenue), ensuring compatibility with the forecasting framework.
+
+
+> 📦 **Data Overview**  
+> Revenue is measured in billions of US dollars and recorded on a quarterly basis.
+
+
+## Data Preview
+
+
+```{r}
+
+library(prophet)
+library(readr)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+netflix_data <- read_csv("data/netflix_revenue.csv")
+netflix_data$ds <- as.Date(netflix_data$ds)
+
+netflix_data %>%
+head(10) %>%
+mutate(y = round(y, 2)) %>%
+kable(caption = "Preview of Netflix Revenue Data (First 10 quarters)", col.names = c("Date", "Revenue (USD bn)")) %>%
+kable_styling( full_width = FALSE, position = "center") %>%
+row_spec(0, bold = TRUE, color = "white", background = "#E50914") %>%
+row_spec(1:10, background = "#1A1A1A", color = "white") %>%
+column_spec(1, bold = TRUE, color = "#E50914") %>%
+column_spec(2, color = "#FFFFFF")
+```
+---
+```{r model-setup, include=FALSE}
+
+library(prophet)
+
+
+prophet_model <- prophet(netflix_data, yearly.seasonality = TRUE, weekly.seasonality = FALSE, daily.seasonality = FALSE)
+
+
+future_dates <- data.frame(ds = c(netflix_data$ds, seq(from = max(netflix_data$ds), by = "3 months", length.out = 8)))
+
+
+forecast_values <- predict(prophet_model, future_dates)
+```
+---
+
+# Initial Visualisation
+
+
+```{r}
+library(ggplot2)
+library(plotly)
+
+p <- ggplot(netflix_data, aes(x = ds, y = y)) +
+geom_line(color = "#E50914", size = 1.2) +
+geom_point(color = "#E50914", size = 2) +
+  
+  labs(title = "Netflix Quarterly Revenue (2015–2025)", subtitle = "Revenue growth over time", x = "Year", y = "Revenue (USD billions)", caption = "Source: Netflix financial reports" ) +
+  
+scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  
+theme_minimal(base_size = 14) +
+  
+theme( plot.title = element_text(face = "bold", size = 16),
+plot.subtitle = element_text(size = 12, color = "gray40"),
+axis.title = element_text(face = "bold"),
+panel.grid.major = element_line(color = "gray85"),
+panel.grid.minor = element_blank(),
+plot.background = element_rect(fill = "white", color = NA))
+
+ggplotly(p)
+```
+
+
+The plot shows a clear upward trend in Netflix's revenue over time.
+
+Quarterly revenue increases steadily from 2015 to 2025, indicating strong growth.
+
+There is also some evidence of seasonal variation, with higher values typically observed towards the end of each year.
+
+Overall, the data shows both trend and seasonal components, making it suitable for modelling using Prophet.
+
+
+---
+
+
+# Prophet Model
+
+The Prophet model is used to generate forecasts of Netflix’s revenue based on historical data. The table below shows the first few predicted values, along with the associated uncertainty bounds.
+
+
+```{r}
+library(knitr)
+library(kableExtra)
+library(dplyr)
+
+head(forecast_values[, c("ds", "yhat", "yhat_lower", "yhat_upper")], 10) %>%
+mutate(across(where(is.numeric), ~ round(.x, 2))) %>%
+kable(caption = "Forecasted Netflix Revenue (First 10 Quarters)", col.names = c("Date", "Forecast", "Lower Bound", "Upper Bound")) %>%
+kable_styling(full_width = FALSE, position = "center", stripe_color = "#F2F2F2") %>%
+row_spec(0, bold = TRUE, color = "white", background = "#E50914") %>%   
+row_spec(1:10, background = "#F7F7F7", color = "#1A1A1A")
+```
+
+
+The upper and lower bounds represent the range within which the true values are expected to lie.
+
+
+---
+
+
+# Forecast and Trend Analysis
+
+To explore how Netflix’s revenue has evolved over time and where it may be heading, we first examine the model’s forecast alongside the underlying trend component.
+
+
+## Forecast & Trend Plots
+
+
+```{r}
+library(prophet)
+library(readr)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(scales)
+
+forecast_plot <- ggplot() +geom_ribbon(data = forecast_values,
+aes(x = ds, ymin = yhat_lower, ymax = yhat_upper), fill = "#B20710", alpha = 0.20  ) +geom_line(data = forecast_values, aes(x = ds, y = yhat, text = paste0("<b>Date:</b> ", ds,"<br><b>Forecast:</b> ", round(yhat, 2), "<br><b>Lower:</b> ", round(yhat_lower, 2),"<br><b>Upper:</b> ", round(yhat_upper, 2))), color = "#E50914",linewidth = 1.3 ) +geom_point(data = netflix_data, aes(x = ds, y = y, text = paste0("<b>Date:</b> ", ds, "<br><b>Actual revenue:</b> ", round(y, 2))), color = "black",size = 2.4  ) + labs(title = "Netflix Revenue Forecast",
+subtitle = "Observed quarterly revenue, Prophet fitted values, and future forecast", x = "Year", y = "Revenue (USD billions)",
+caption = "Black points = observed data | Red line = fitted and forecast values | Shaded area = uncertainty interval" ) + scale_x_date(date_breaks = "2 year", date_labels = "%Y") +
+theme_minimal(base_size = 13) + theme(plot.title = element_text(face = "bold", size = 18, color = "#E50914"),
+plot.subtitle = element_text(size = 11, color = "#4D4D4D"),
+axis.title = element_text(face = "bold"),
+panel.grid.minor = element_blank(),
+panel.grid.major = element_line(color = "#D9D9D9"),
+plot.background = element_rect(fill = "#F7F7F7", color = NA),
+panel.background = element_rect(fill = "#F7F7F7", color =NA),
+plot.caption = element_text(color = "#555555", hjust = 0))
+
+ggplotly(forecast_plot, tooltip = "text")
+```
+
+```{r}
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(scales)
+
+trend_data <- forecast_values %>%
+select(ds, trend) %>%
+filter(!is.na(ds), !is.na(trend)) %>%
+mutate(ds = as.Date(ds), trend = as.numeric(trend))
+
+trend_plot <- ggplot(trend_data,aes(x = ds, y = trend, text = paste0("Date: ", ds,"<br>Trend: ", round(trend, 2), " Scaled Value"))) +
+geom_line(color = "#8B0000", linewidth = 1.4) + geom_point(color = "#B22222", size = 2) + labs(title = "Underlying Revenue Trend", subtitle = "Long-run trend estimated by Prophet", x = "Year", y = "Trend (Scaled Values)", caption = "This interactive chart shows the underlying long-term movement in Netflix revenue after removing seasonal fluctuations.") + scale_x_date(date_breaks = "2 years", date_labels = "%Y") + theme_minimal(base_size = 13) +
+theme(plot.title = element_text(face = "bold", color = "#8B0000", size = 18),plot.subtitle = element_text(size = 11, color = "#444444"),axis.title = element_text(face = "bold"), panel.grid.minor = element_blank(), panel.grid.major = element_line(color = "#D9D9D9"), plot.background = element_rect(fill = "#F1F1F1", color = NA), panel.background = element_rect(fill = "#F1F1F1", color = NA), plot.caption = element_text(color = "#555555", hjust = 0))
+
+ggplotly(trend_plot, tooltip = "text")
+```
+
+
+The interactive forecast plot shows both the historical revenue data and the model’s predicted values. The model closely tracks the observed data, suggesting **a strong fit**. Looking ahead, the forecast continues the **upward trajectory**, indicating that Netflix’s revenue is expected to **keep growing**. The shaded area around the forecast widens slightly over time, reflecting increasing uncertainty - as with any prediction, the further into the future we look, the less certain things become.
+
+The interactive trend plot strips the series back to its essentials, showing only the long-term movement in revenue. Here, the story is very clear: Netflix has experienced steady and sustained growth throughout the period. There are no sharp drops or dramatic swings, just a consistent climb, almost like a binge-worthy series that keeps getting renewed season after season.
+
+What’s particularly interesting is how similar the two plots appear. At first glance, it might seem like we are looking at the same graph twice, but this actually reveals something important about the data. The close alignment between the forecast and the trend suggests that **Netflix’s revenue is largely driven by long-term growth**, with relatively little influence from seasonal patterns or short-term fluctuations.
+
+In other words, the model doesn’t need to “work too hard” to explain the data - the trend does most of the heavy lifting. This indicates that Netflix’s revenue growth is stable, predictable, and not heavily affected by cyclical behavior. Altogether, both plots point to a clear conclusion: the dominant feature of the series is strong and sustained upward growth.
+
+**This consistency suggests a mature and steadily expanding business model rather than one dependent on short-term spikes.**
+
+
+---
+
+
+# Revenue Growth Dynamics
+
+
+While the previous plots focus on overall levels and long-term trends, it is also useful to examine how quickly revenue is growing over time.
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(plotly)
+
+netflix_growth <- netflix_data %>%
+arrange(ds) %>%
+mutate(growth_rate = (y - lag(y)) / lag(y) * 100) %>%
+filter(!is.na(growth_rate))
+
+growth_plot <- ggplot(netflix_growth,aes(x = ds, y = growth_rate, group = 1, text = paste0( "Date: ", ds,"<br>Growth: ", round(growth_rate, 2), "%"))) +
+  
+  
+geom_line(color = "#E50914", linewidth = 1.3) +
+  
+
+geom_point(color = "#E50914", size = 1.5, alpha = 0.6) +
+  
+  
+geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  
+labs(title = "Quarterly Revenue Growth Rate", subtitle = "Percentage change in Netflix revenue between quarters", x = "Year", y = "Growth (%)", caption = "Each point represents quarterly growth") + scale_x_date(date_breaks = "2 years", date_labels = "%Y") + theme_minimal(base_size = 13) + theme(plot.title = element_text(face = "bold", color = "#E50914", size = 18), plot.subtitle = element_text(size = 11), axis.title = element_text(face = "bold"), panel.grid.minor = element_blank(),
+plot.background = element_rect(fill = "#F7F7F7", color = NA))
+
+ggplotly(growth_plot, tooltip = "text")
+```
+
+
+The interactive growth rate plot shows the percentage change in Netflix’s revenue from one quarter to the next, offering a more detailed view of how the pace of growth evolves over time.
+
+In the earlier years, **growth is relatively strong** and even **peaks above 10% in Q1 of 2018, suggesting a period of rapid expansion**. This likely reflects Netflix’s global expansion phase, where subscriber numbers were increasing quickly and new markets were being entered.
+
+However, **around 2019, the growth rate becomes more volatile and begins to moderate**. There are noticeable ups and downs, including a sharp drop following one of the earlier peaks, indicating that high growth was not always sustained. This could be linked to market saturation in key regions or increased competition from other streaming platforms.
+
+Moving into **the 2020–2022 period**, growth appears to stabilise at lower levels, generally fluctuating between 2% and 8%. There is even **a dip into negative growth**, suggesting a short period where revenue slightly declined. This aligns with real-world challenges such as market adjustments and changing subscriber dynamics.
+
+From **2023 onwards, growth resumes but remains more moderate and consistent** compared to earlier years. Rather than rapid spikes, the pattern suggests a more mature phase of steady expansion - less explosive, but still moving in the right direction.
+
+Overall, while Netflix’s revenue continues to increase over time, the growth rate tells a more nuanced story. The company appears to have transitioned from a high-growth phase into a more stable and mature stage, where growth is still positive but less dramatic. It’s no longer sprinting, but it’s definitely not standing still either.
+
+**This shift reflects a common pattern in successful businesses, where early rapid growth eventually gives way to more sustainable, long-term expansion.**
+
+
+---
+
+
+# Model Diagnostics: Residual Analysis
+
+To evaluate how well the model captures the data, we examine the residuals, which represent the difference between the observed values and the model’s predictions.
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(plotly)
+
+
+residual_data <- forecast_values %>%
+left_join(netflix_data, by = "ds") %>%
+mutate(residual = y - yhat) %>%
+filter(!is.na(y), !is.na(residual))
+
+residual_plot <- ggplot(residual_data,aes(x = ds, y = residual, text = paste0( "Date: ", ds, "<br>Actual: ", round(y, 2), "<br>Fitted: ", round(yhat, 2), "<br>Residual: ", round(residual, 2)))) +
+geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") + geom_line(color = "#E50914", linewidth = 1.2) + geom_point(color = "#E50914", size = 2, alpha = 0.8) +
+labs(title = "Residuals Over Time", subtitle = "Difference between actual and fitted revenue", x = "Year", y = "Residual",
+caption = "Residual = actual revenue minus fitted revenue. Values close to zero indicate a good fit.") +
+scale_x_date(date_breaks = "2 year", date_labels = "%Y") +
+theme_minimal(base_size = 13) + theme( plot.title = element_text(face = "bold", color = "#E50914", size = 18),
+plot.subtitle = element_text(size = 11),
+axis.title = element_text(face = "bold"),
+panel.grid.minor = element_blank(),
+plot.background = element_rect(fill = "#F7F7F7", color = NA),
+panel.background = element_rect(fill = "#F7F7F7", color = NA))
+
+ggplotly(residual_plot, tooltip = "text")
+```
+
+
+The residual plot shows how far the model’s predictions deviate from the actual observed revenue over time. In simple terms, it highlights where the model slightly overestimates or underestimates the data.
+
+Ideally, residuals should be small and randomly scattered around zero, and this is largely what we observe here. Most of the points lie close to the zero line, suggesting that **the model’s predictions are generally accurate**. There is no clear upward or downward pattern, which indicates that the model is not systematically biased.
+
+There are a few larger deviations, particularly in the later years, where the residuals become slightly more spread out. This is not unusual, as forecasting becomes more uncertain over time and the model may struggle slightly more to capture small fluctuations as the series evolves.
+
+Importantly, the residuals do not show any consistent structure or repeating pattern. If they did, it would suggest that the model is missing something important. Instead, the residuals appear fairly random, which is a good sign - it means the model has successfully captured the main trends in the data.
+
+**In short, the model is not perfect (no model ever is), but it is doing a solid job. It’s like a streaming recommendation algorithm that occasionally suggests something slightly off, but mostly gets it right.**
+
+
+---
+
+
+# Final Review
+
+**This analysis looks at Netflix’s revenue over the last decade to understand how it has grown and where it may be heading in the future.**
+
+The forecast follows the historical data closely and suggests that revenue will continue to rise, although uncertainty increases slightly further into the future 🔮. The trend plot tells almost the same story, showing a smooth and steady upward path. While this might seem repetitive, it highlights something important - Netflix’s growth is driven mainly by a strong long-term trend rather than short-term fluctuations.
+
+> 💡 **Key takeaway:** Netflix’s revenue growth is stable, consistent, and largely trend-driven.
+
+
+The growth rate adds another layer by showing how fast revenue is increasing. Early on, growth is higher and more volatile, likely reflecting rapid expansion. Over time, it becomes more moderate and stable - less of a sprint, more of a steady pace 🏃.
+
+The residuals show that the model performs well overall, with most values close to zero and no clear pattern. This suggests the model captures the main behavior of the data without systematic errors.
+
+**Overall, Netflix’s revenue shows strong and consistent growth, with the model providing a reliable representation of this pattern. It may not be full of surprises, but a steady upward trend is a pretty good ending!** 📈😄
+
+
+---
+
+
+# References
+
+**Netflix, Inc. (2026) Quarterly Earnings and Financial Results**. Available at: <https://ir.netflix.net/financials/quarterly-earnings/default.aspx> (Accessed March 2026).
+
+**MacroTrends (2026) Netflix Revenue Data (Historical)**. Available at: <https://www.macrotrends.net/stocks/charts/NFLX/netflix/revenue> (Accessed March 2026).
+
+**Yahoo Finance (2026) Netflix (NFLX) Financials**. Available at: <https://finance.yahoo.com/quote/NFLX/financials/> (Accessed March 2026).
+
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
